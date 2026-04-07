@@ -107,226 +107,67 @@
         </div>
     </div>
 
+    <script src="./src/ka-tika-browser.js"></script>
     <script>
-        // --- DATA KONSTANTA KALENDER ---
-        const SAPTAWARA = ['Redite', 'Soma', 'Anggara', 'Buda', 'Wraspati', 'Sukra', 'Saniscara'];
-        const PANCAWARA = ['Umanis', 'Paing', 'Pon', 'Wage', 'Kliwon'];
-        const TRIWARA = ['Pasah', 'Beteng', 'Kajeng'];
-        const WUKU = [
-            'Sinta', 'Landep', 'Ukir', 'Kurantil', 'Talu', 'Bantang', 'Wariga', 'Warigadean', 
-            'Julungwangi', 'Sungsang', 'Dungulan', 'Kuningan', 'Langkir', 'Medangsia', 'Pujut', 
-            'Pahang', 'Krulut', 'Merakih', 'Tambir', 'Medangkungan', 'Matal', 'Uye', 'Menail', 
-            'Prangbakat', 'Bala', 'Ugu', 'Wayang', 'Klawu', 'Dukut', 'Watugunung'
-        ];
-        const SASIH = [
-            'Kasa', 'Karo', 'Katiga', 'Kapat', 'Kalima', 'Kanem', 
-            'Kapitu', 'Kawalu', 'Kasanga', 'Kedasa', 'Jyestha', 'Sadha'
-        ];
+        const toWitaInputString = (dateObj) => {
+            const formatter = new Intl.DateTimeFormat('sv-SE', {
+                timeZone: 'Asia/Makassar',
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', hour12: false
+            });
+            return formatter.format(dateObj).replace(' ', 'T');
+        };
 
-        // --- MESIN PENGGERAK DINAMIS (ASTRONOMICAL ENGINE) ---
-        class KaTikaEngine {
-            constructor() {
-                // Konfigurasi offset (kalibrasi jatuh tempo hari pada saat anchor 1938)
-                this.offsetSapta = 1; 
-                this.offsetPanca = 0; 
-                this.offsetTri = 0;   
-                this.offsetWuku = 0;  
-            }
+        const gregorianWitaLabel = (inputVal) => {
+            const [datePart, timePart] = inputVal.split('T');
+            const [y, m, d] = datePart.split('-').map(Number);
+            const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+            const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+            const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+            return `${dayNames[dow]}, ${d} ${monthNames[m - 1]} ${y} - ${timePart} WITA`;
+        };
 
-            safeIdx(val, max) {
-                return ((val % max) + max) % max;
-            }
-
-            calculate(targetDate = null) {
-                // Ekstraksi waktu murni (Kebal terhadap Timezone perangkat pengguna / Strict WITA)
-                let year, month, date, hours, mins;
-
-                if (targetDate) {
-                    // Jika mode pencarian, ambil angka murni dari string "YYYY-MM-DDTHH:mm"
-                    const parts = targetDate.split('T');
-                    const dSplit = parts[0].split('-');
-                    const tSplit = parts[1].split(':');
-                    
-                    year = parseInt(dSplit[0], 10);
-                    month = parseInt(dSplit[1], 10) - 1; // JS month 0-11
-                    date = parseInt(dSplit[2], 10);
-                    hours = parseInt(tSplit[0], 10);
-                    mins = parseInt(tSplit[1], 10);
-                } else {
-                    // Jika real-time, format waktu ke standar WITA (Makassar)
-                    const formatter = new Intl.DateTimeFormat('en-US', {
-                        timeZone: 'Asia/Makassar',
-                        year: 'numeric', month: 'numeric', day: 'numeric',
-                        hour: 'numeric', minute: 'numeric', hour12: false
-                    });
-                    const p = {};
-                    for (const part of formatter.formatToParts(new Date())) p[part.type] = part.value;
-                    
-                    year = parseInt(p.year, 10);
-                    month = parseInt(p.month, 10) - 1;
-                    date = parseInt(p.day, 10);
-                    hours = parseInt(p.hour, 10);
-                    if (hours === 24) hours = 0;
-                    mins = parseInt(p.minute, 10);
-                }
-
-                // 2. TENTUKAN TOTAL HARI SEJAK ANCHOR (27 JUNI 1938)
-                const anchorMidnight = Date.UTC(1938, 5, 27);
-                const currentMidnight = Date.UTC(year, month, date);
-                const daysDiff = Math.floor((currentMidnight - anchorMidnight) / 86400000);
-                
-                // 3. HITUNG EVENT TETAP & JENDELA EVENT 1 JAM
-                // Menggunakan batas event: 05:30 (Sunrise/Galang Kangin) dan 18:00 (Sunset/Sandikala) WITA
-                const timeFloat = hours + (mins / 60);
-                
-                let absoluteEventIndex = 0;
-                let isEventActive = false;
-                let activeEventLabel = "";
-                
-                // Deteksi Jendela Event 1 Jam (Kompensasi pergeseran alam)
-                if (timeFloat >= 18 && timeFloat < 19) {
-                    isEventActive = true;
-                    activeEventLabel = "🌅 EVENT SANDIKALA";
-                } else if (timeFloat >= 5.5 && timeFloat < 6.5) {
-                    isEventActive = true;
-                    activeEventLabel = "🌄 EVENT GALANG KANGIN";
-                }
-                
-                // Logika Penentuan Event Timeline (0 = Event Sunset 27 Jun 1938)
-                if (timeFloat < 5.5) {
-                    absoluteEventIndex = (daysDiff * 2) - 2; // Berada di rentang setelah sunset kemarin
-                } else if (timeFloat >= 5.5 && timeFloat < 18) {
-                    absoluteEventIndex = (daysDiff * 2) - 1; // Berada di rentang setelah sunrise hari ini
-                } else {
-                    absoluteEventIndex = (daysDiff * 2);     // Berada di rentang setelah sunset hari ini
-                }
-                
-                // 4. MESIN DINA (1 Dina = 3 Event Fase) - Berjalan di backend
-                const totalDina = Math.floor(absoluteEventIndex / 3);
-
-                // Penentuan status fase di luar jendela event 1 jam
-                let currentPhase = "";
-                if (timeFloat >= 19 || timeFloat < 5.5) {
-                    currentPhase = "🌙 FASE PETENG"; // Malam hari
-                } else if (timeFloat >= 6.5 && timeFloat < 18) {
-                    currentPhase = "☀️ FASE LEMAH"; // Siang hari
-                }
-
-                // Final display: Tampilkan event jika aktif, jika tidak tampilkan fase saat ini
-                const finalEventDisplay = isEventActive ? activeEventLabel : currentPhase;
-
-                // 5. MODUL SASIH DENGAN POLA GELAP TERANG
-                const sasihIndex = this.safeIdx(Math.floor(totalDina / 30), 12);
-                const dinaDalamSasih = this.safeIdx(totalDina, 30); // Nilai 0 - 29 (Dina 1 s/d 30)
-                const isPolaGelap = sasihIndex % 2 === 0;
-                
-                let lunarPhaseStr = "";
-                const dinaKe = dinaDalamSasih + 1; // 1 s/d 30
-                
-                // Sesuai instruksi, pada dashboard hanya menampilkan Tilem/Purnama, fase "menuju" bisa kita tampilkan jika harinya tepat
-                if (isPolaGelap) {
-                    if (dinaKe === 1 || dinaKe === 20) lunarPhaseStr = "Tilem 🌑";
-                    else if (dinaKe === 10 || dinaKe === 30) lunarPhaseStr = "Purnama 🌕";
-                } else {
-                    if (dinaKe === 1 || dinaKe === 20) lunarPhaseStr = "Purnama 🌕";
-                    else if (dinaKe === 10 || dinaKe === 30) lunarPhaseStr = "Tilem 🌑";
-                }
-
-                // Format String Masehi Manual (Menghindari manipulasi Timezone browser)
-                const pad = (n) => n.toString().padStart(2, '0');
-                const daysNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-                const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-                const dayOfWeek = new Date(Date.UTC(year, month, date)).getUTCDay();
-                const gregorianDisplay = `${daysNames[dayOfWeek]}, ${date} ${monthNames[month]} ${year}`;
-                const timeDisplay = `${pad(hours)}:${pad(mins)}`;
-
-                return {
-                    eventStatus: finalEventDisplay,
-                    isEventActive: isEventActive,
-                    saptawara: SAPTAWARA[this.safeIdx(totalDina + this.offsetSapta, 7)],
-                    pancawara: PANCAWARA[this.safeIdx(totalDina + this.offsetPanca, 5)],
-                    triwara: TRIWARA[this.safeIdx(totalDina + this.offsetTri, 3)],
-                    wuku: WUKU[this.safeIdx(Math.floor((totalDina + this.offsetWuku) / 7), 30)],
-                    sasihName: SASIH[sasihIndex],
-                    dinaLabel: `Dina Ke-${dinaKe} Sasih ${SASIH[sasihIndex]}`, // Backend use
-                    lunarPhase: lunarPhaseStr,
-                    gregorian: (targetDate ? "[MODE PENCARIAN] " : "") + gregorianDisplay + " - " + timeDisplay + " WITA"
-                };
-            }
-
-            updateUI(targetDate = null) {
-                const data = this.calculate(targetDate);
-                
-                const eventStatusEl = document.getElementById('event-status');
-                eventStatusEl.innerText = data.eventStatus; // Pasang teks status event
-                
-                // Ubah gaya visual (warna & animasi) jika event 1 jam sedang berlangsung
-                if (data.isEventActive) {
-                    eventStatusEl.classList.remove('bg-gold-dark', 'border-gold', 'text-gold');
-                    eventStatusEl.classList.add('bg-red-900', 'bg-opacity-80', 'border-red-500', 'text-white', 'animate-pulse');
-                } else {
-                    eventStatusEl.classList.remove('bg-red-900', 'bg-opacity-80', 'border-red-500', 'text-white', 'animate-pulse');
-                    eventStatusEl.classList.add('bg-gold-dark', 'border-gold', 'text-gold');
-                }
-                
-                document.getElementById('saptawara').innerText = data.saptawara;
-                document.getElementById('tri-panca').innerHTML = `${data.triwara} <span class="text-white opacity-50 px-2">&bull;</span> ${data.pancawara}`;
-                document.getElementById('wuku').innerText = data.wuku;
-                document.getElementById('sasih').innerText = data.sasihName;
-                document.getElementById('dina-label').innerText = data.dinaLabel;
-                document.getElementById('gregorian-date').innerText = data.gregorian;
-
-                // Modul Lunar Phase: Hanya tampilkan jika jatuh pada Purnama / Tilem (sesuai intruksi)
-                const lunarPhaseEl = document.getElementById('lunar-phase');
-                if (data.lunarPhase !== "") {
-                    lunarPhaseEl.innerText = data.lunarPhase;
-                    lunarPhaseEl.classList.remove('hidden');
-                } else {
-                    lunarPhaseEl.classList.add('hidden');
-                }
-            }
-        }
-
-        // Inisialisasi Aplikasi
         document.addEventListener('DOMContentLoaded', () => {
-            const kalender = new KaTikaEngine();
-            
-            // State untuk mode pencarian
-            let isSearchMode = false;
-            let searchDateValue = null;
+            const machine = new window.KaTikaStateMachine();
+            const inputEl = document.getElementById('search-input');
+            const eventStatusEl = document.getElementById('event-status');
+            let searchMode = false;
+            let searchValue = '';
 
-            // Fungsi render utama
-            const renderApp = () => {
-                kalender.updateUI(isSearchMode ? searchDateValue : null);
+            const render = () => {
+                const activeValue = searchMode ? searchValue : toWitaInputString(new Date());
+                const result = machine.resolve(activeValue);
+
+                eventStatusEl.innerText = result.metadata.dina.pola_aktif;
+                document.getElementById('saptawara').innerText = result.ui_display.nama_saptawara;
+                document.getElementById('tri-panca').innerHTML = `${result.ui_display.nama_triwara} <span class="text-white opacity-50 px-2">&bull;</span> ${result.ui_display.nama_pancawara}`;
+                document.getElementById('wuku').innerText = result.ui_display.nama_wuku;
+                document.getElementById('sasih').innerText = result.ui_display.nama_sasih;
+
+                const fase = result.ui_display.fase_sasih;
+                const lunarText = fase === 'Dina Biasa' ? '--' : `${fase} ${fase === 'Purnama' ? '🌕' : '🌑'}`;
+                document.getElementById('lunar-phase').innerText = lunarText;
+                document.getElementById('gregorian-date').innerText = (searchMode ? '[MODE PENCARIAN] ' : '') + gregorianWitaLabel(activeValue);
             };
 
-            // Render pertama kali
-            renderApp();
+            render();
 
-            // Event Listener Tombol Cari
             document.getElementById('btn-search').addEventListener('click', () => {
-                const inputVal = document.getElementById('search-input').value;
-                if (inputVal) {
-                    isSearchMode = true;
-                    // Kirim STRING mentah ke engine, hindari penggunaan 'new Date()'
-                    searchDateValue = inputVal; 
-                    renderApp();
-                }
+                if (!inputEl.value) return;
+                searchMode = true;
+                searchValue = inputEl.value;
+                render();
             });
 
-            // Event Listener Tombol Sekarang (Reset)
             document.getElementById('btn-reset').addEventListener('click', () => {
-                isSearchMode = false;
-                searchDateValue = null;
-                document.getElementById('search-input').value = '';
-                renderApp();
+                searchMode = false;
+                searchValue = '';
+                inputEl.value = '';
+                render();
             });
 
-            // Update setiap 1 menit (Hanya berjalan jika TIDAK dalam mode pencarian)
             setInterval(() => {
-                if (!isSearchMode) {
-                    renderApp();
-                }
+                if (!searchMode) render();
             }, 60000);
         });
     </script>
